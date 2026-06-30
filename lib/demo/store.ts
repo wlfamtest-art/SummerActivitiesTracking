@@ -153,6 +153,18 @@ export interface SummerQuestState {
 }
 
 const STORAGE_KEY = "summer-quest-demo-state";
+const STATE_ARRAY_KEYS: Array<keyof SummerQuestState> = [
+  "families",
+  "users",
+  "children",
+  "assigned_quests",
+  "quest_instances",
+  "rewards",
+  "reward_redemptions",
+  "xp_transactions",
+  "coin_transactions",
+  "rest_days",
+];
 let memoryState: SummerQuestState | null = null;
 
 export function createInitialState(): SummerQuestState {
@@ -177,7 +189,21 @@ function hasLocalStorage(): boolean {
 export function loadState(): SummerQuestState {
   if (hasLocalStorage()) {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) as SummerQuestState : createInitialState();
+    if (!raw) {
+      return createInitialState();
+    }
+
+    try {
+      const parsed = JSON.parse(raw);
+      if (isSummerQuestState(parsed)) {
+        return parsed;
+      }
+    } catch {
+      // Fall through to reset stale or corrupted local demo data.
+    }
+
+    window.localStorage.removeItem(STORAGE_KEY);
+    return createInitialState();
   }
 
   return memoryState ? structuredClone(memoryState) : createInitialState();
@@ -199,4 +225,12 @@ export function resetState(): void {
   }
 
   memoryState = null;
+}
+
+function isSummerQuestState(value: unknown): value is SummerQuestState {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      STATE_ARRAY_KEYS.every((key) => Array.isArray((value as Partial<SummerQuestState>)[key])),
+  );
 }

@@ -22,6 +22,7 @@ import type { SummerQuestState } from "../lib/demo/store";
 import { createInitialState } from "../lib/demo/store";
 import { ACTIVITY_CATEGORIES, WEEKDAYS } from "../lib/game/constants";
 import { getLevelForXp, getLevelProgress } from "../lib/game/levels";
+import { getTodayInTimeZone } from "../lib/dates/timezone";
 import { getDateForWeekday, getWeekdayForDate, getWeekStartMonday } from "../lib/dates/weekdays";
 import { calculateWeeklyBalance } from "../lib/game/balance";
 import { getKidNotifications } from "../lib/demo/notifications";
@@ -32,10 +33,10 @@ import { REWARD_ICON_OPTIONS } from "../lib/demo/rewardIcons";
 import { getKidVisibleRewards } from "../lib/demo/kidRewards";
 import { getKidQuestFeedback } from "../lib/demo/kidQuestFeedback";
 import { QUEST_ICON_OPTIONS } from "../lib/demo/questIcons";
+import { createBrowserSupabaseClient, isSupabaseConfigured } from "../lib/supabase/client";
+import { approveRewardRedemption as approveSupabaseRewardRedemption } from "../lib/supabase/rewards";
 
 type View = "dashboard" | "quests" | "rewards" | "approvals" | "planner" | "settings" | "kid";
-
-const todayKey = "2026-06-29";
 
 export function SummerQuestApp() {
   const repoRef = useRef(createDemoRepository(createInitialState()));
@@ -51,18 +52,26 @@ export function SummerQuestApp() {
     setReady(true);
   }, []);
 
+  useEffect(() => {
+    const interval = setInterval(() => {
+      refresh();
+    }, 60_000);
+
+    return () => clearInterval(interval);
+  }, []);
+
   function refresh() {
     setState(repoRef.current.getState());
   }
 
-  function createDemo() {
+  function createDemo(kidPin: string) {
     const { child } = repoRef.current.onboardParent({
       familyName: "River Family",
       parentEmail: "parent@example.com",
       childName: "Mina",
       childAvatar: "🧭",
       ageBand: "younger",
-      kidPin: "1234",
+      kidPin,
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Los_Angeles",
     });
     repoRef.current.useStarterPlan(child.id);
@@ -85,6 +94,8 @@ export function SummerQuestApp() {
   const family = state.families[0];
   const level = child ? getLevelForXp(child.total_xp) : null;
   const progress = child ? getLevelProgress(child.total_xp) : null;
+  const fallbackTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const todayKey = getTodayInTimeZone(family?.time_zone ?? fallbackTimeZone);
 
   if (!ready) {
     return (
@@ -106,6 +117,7 @@ export function SummerQuestApp() {
         child={child}
         level={level!}
         progress={progress!}
+        todayKey={todayKey}
         state={state}
         repo={repoRef.current}
         refresh={refresh}
@@ -152,19 +164,38 @@ export function SummerQuestApp() {
         </header>
 
         <section className="flex-1 px-3 py-4 sm:px-4 sm:py-5">
-          {view === "dashboard" && <Dashboard state={state} child={child} level={level!} progress={progress!} setView={setView} />}
-          {view === "quests" && <QuestManager state={state} repo={repoRef.current} refresh={refresh} />}
+          {view === "dashboard" && <Dashboard state={state} child={child} level={level!} progress={progress!} todayKey={todayKey} setView={setView} />}
+          {view === "quests" && <QuestManager state={state} todayKey={todayKey} repo={repoRef.current} refresh={refresh} />}
           {view === "rewards" && <Rewards state={state} repo={repoRef.current} refresh={refresh} />}
           {view === "approvals" && <Approvals state={state} repo={repoRef.current} refresh={refresh} />}
-          {view === "planner" && <Planner state={state} repo={repoRef.current} refresh={refresh} />}
-          {view === "settings" && <Settings family={family} state={state} repo={repoRef.current} refresh={refresh} />}
+          {view === "planner" && <Planner state={state} todayKey={todayKey} repo={repoRef.current} refresh={refresh} />}
+          {view === "settings" && <Settings family={family} state={state} todayKey={todayKey} repo={repoRef.current} refresh={refresh} />}
         </section>
       </div>
     </main>
   );
 }
 
-function Onboarding({ onStart }: { onStart: () => void }) {
+function Onboarding({ onStart }: { onStart: (kidPin: string) => void }) {
+  const [pin, setPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const [error, setError] = useState("");
+
+  function handleStart() {
+    if (!/^\d{4}$/.test(pin)) {
+      setError("Kid Mode PIN must be exactly 4 digits.");
+      return;
+    }
+
+    if (pin !== confirmPin) {
+      setError("PINs do not match.");
+      return;
+    }
+
+    setError("");
+    onStart(pin);
+  }
+
   return (
     <main className="min-h-screen bg-[#e5f3f0] px-4 py-6 text-slate-950">
       <section className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-xl flex-col justify-between rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
@@ -177,14 +208,39 @@ function Onboarding({ onStart }: { onStart: () => void }) {
             <Sparkles className="h-10 w-10 text-amber-500" />
           </div>
           <div className="grid gap-3">
-            {["One parent account", "One adventurer profile", "Starter quests and rewards", "4-digit Kid Mode PIN: 1234"].map((item) => (
+            {["One parent account", "One adventurer profile", "Starter quests and rewards"].map((item) => (
               <div className="rounded-md border border-slate-200 p-3 text-sm font-medium" key={item}>
                 {item}
               </div>
             ))}
+            <div className="rounded-md border border-slate-200 p-3">
+              <label className="block text-sm font-semibold">
+                Kid Mode PIN
+                <input
+                  className="mt-1 min-h-11 w-full rounded-md border border-slate-300 px-3"
+                  inputMode="numeric"
+                  maxLength={4}
+                  type="password"
+                  value={pin}
+                  onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 4))}
+                />
+              </label>
+              <label className="mt-3 block text-sm font-semibold">
+                Confirm PIN
+                <input
+                  className="mt-1 min-h-11 w-full rounded-md border border-slate-300 px-3"
+                  inputMode="numeric"
+                  maxLength={4}
+                  type="password"
+                  value={confirmPin}
+                  onChange={(event) => setConfirmPin(event.target.value.replace(/\D/g, "").slice(0, 4))}
+                />
+              </label>
+              {error && <p className="mt-2 text-sm font-semibold text-red-700">{error}</p>}
+            </div>
           </div>
         </div>
-        <button className="mt-8 min-h-12 rounded-md bg-slate-950 px-4 py-3 font-semibold text-white" onClick={onStart}>
+        <button className="mt-8 min-h-12 rounded-md bg-slate-950 px-4 py-3 font-semibold text-white" onClick={handleStart}>
           Create Demo Family
         </button>
       </section>
@@ -192,13 +248,13 @@ function Onboarding({ onStart }: { onStart: () => void }) {
   );
 }
 
-function Dashboard({ state, child, level, progress, setView }: any) {
+function Dashboard({ state, child, level, progress, todayKey, setView }: any) {
   const todayInstances = state.quest_instances.filter((item: any) => item.quest_date === todayKey);
   const completed = todayInstances.filter((item: any) => item.status === "completed").length;
   const pendingQuestApprovals = state.quest_instances.filter((item: any) => item.status === "submitted").length;
   const pendingRewards = state.reward_redemptions.filter((item: any) => item.status === "requested").length;
   const screen = todayInstances.find((item: any) => item.name === "Screen Time");
-  const balance = useWeeklyBalance(state);
+  const balance = useWeeklyBalance(state, todayKey);
 
   return (
     <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
@@ -257,7 +313,7 @@ function Dashboard({ state, child, level, progress, setView }: any) {
   );
 }
 
-function QuestManager({ state, repo, refresh }: any) {
+function QuestManager({ state, todayKey, repo, refresh }: any) {
   const blankForm = {
     id: "",
     name: "",
@@ -543,7 +599,7 @@ function QuestManager({ state, repo, refresh }: any) {
   );
 }
 
-function KidMode({ child, level, progress, state, repo, refresh, exitKidMode, pinAttempt, setPinAttempt, pinError }: any) {
+function KidMode({ child, level, progress, todayKey, state, repo, refresh, exitKidMode, pinAttempt, setPinAttempt, pinError }: any) {
   const [questFeedback, setQuestFeedback] = useState<any>(null);
   const restDay = state.rest_days.find((item: any) => item.date === todayKey);
   const instances = restDay ? [] : state.quest_instances.filter((item: any) => item.quest_date === todayKey);
@@ -979,7 +1035,7 @@ function Approvals({ state, repo, refresh }: any) {
     refresh();
   }
 
-  function resolveReward(redemption: any, targetStatus: "approved" | "approved_for_later" | "denied", allowOverdraw = false) {
+  async function resolveReward(redemption: any, targetStatus: "approved" | "approved_for_later" | "denied", allowOverdraw = false) {
     const reward = state.rewards.find((item: any) => item.id === redemption.reward_id);
     const deductsCoins = targetStatus === "approved" || targetStatus === "approved_for_later";
     const resultingBalance = child.coin_balance - redemption.cost;
@@ -990,14 +1046,31 @@ function Approvals({ state, repo, refresh }: any) {
       return;
     }
 
-    repo.approveReward(redemption.id, targetStatus, allowOverdraw);
-    setOverdraw(null);
-    setNotice(
-      targetStatus === "denied"
-        ? `${reward?.name ?? "Reward"} was denied. No coins were deducted.`
-        : `${reward?.name ?? "Reward"} approved. New coin balance: ${resultingBalance}.`,
-    );
-    refresh();
+    try {
+      if (deductsCoins && isSupabaseConfigured()) {
+        const supabase = createBrowserSupabaseClient();
+        await approveSupabaseRewardRedemption(supabase, redemption.id, targetStatus, allowOverdraw);
+      }
+
+      repo.approveReward(redemption.id, targetStatus, allowOverdraw);
+      setOverdraw(null);
+      setNotice(
+        targetStatus === "denied"
+          ? `${reward?.name ?? "Reward"} was denied. No coins were deducted.`
+          : `${reward?.name ?? "Reward"} approved. New coin balance: ${resultingBalance}.`,
+      );
+      refresh();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Reward approval failed.";
+      if (deductsCoins && message.toLowerCase().includes("reduce the coin balance below zero") && !allowOverdraw) {
+        setOverdraw({ redemption, reward, targetStatus, resultingBalance });
+        setNotice("");
+        return;
+      }
+
+      setOverdraw(null);
+      setNotice(message);
+    }
   }
 
   return (
@@ -1112,8 +1185,8 @@ function Approvals({ state, repo, refresh }: any) {
   );
 }
 
-function Planner({ state, repo, refresh }: any) {
-  const balance = useWeeklyBalance(state);
+function Planner({ state, todayKey, repo, refresh }: any) {
+  const balance = useWeeklyBalance(state, todayKey);
   const weekStart = getWeekStartMonday(todayKey);
   const [notice, setNotice] = useState("");
 
@@ -1177,9 +1250,11 @@ function Planner({ state, repo, refresh }: any) {
   );
 }
 
-function Settings({ family, state, repo, refresh }: any) {
+function Settings({ family, state, todayKey, repo, refresh }: any) {
   const [timeZone, setTimeZone] = useState(family.time_zone);
-  const [pin, setPin] = useState("1234");
+  const [currentPin, setCurrentPin] = useState("");
+  const [newPin, setNewPin] = useState("");
+  const [confirmNewPin, setConfirmNewPin] = useState("");
   const [notice, setNotice] = useState("");
   const [confirmReset, setConfirmReset] = useState(false);
   const dataSummary = [
@@ -1195,13 +1270,36 @@ function Settings({ family, state, repo, refresh }: any) {
   });
 
   function saveSettings() {
-    if (!/^\d{4}$/.test(pin.trim())) {
-      setNotice("Kid Mode PIN needs exactly 4 digits.");
-      return;
+    repo.updateTimeZone(timeZone.trim() || family.time_zone);
+    const wantsPinChange = newPin.trim().length > 0 || confirmNewPin.trim().length > 0;
+
+    if (wantsPinChange) {
+      if (!/^\d{4}$/.test(currentPin.trim())) {
+        setNotice("Enter your current 4-digit Kid Mode PIN to make changes.");
+        return;
+      }
+
+      if (!repo.verifyKidModePin(currentPin.trim())) {
+        setNotice("Current PIN is incorrect.");
+        return;
+      }
+
+      if (!/^\d{4}$/.test(newPin.trim())) {
+        setNotice("New Kid Mode PIN needs exactly 4 digits.");
+        return;
+      }
+
+      if (newPin.trim() !== confirmNewPin.trim()) {
+        setNotice("New PIN and confirmation do not match.");
+        return;
+      }
+
+      repo.resetKidModePin(newPin.trim());
+      setCurrentPin("");
+      setNewPin("");
+      setConfirmNewPin("");
     }
 
-    repo.updateTimeZone(timeZone.trim() || family.time_zone);
-    repo.resetKidModePin(pin.trim());
     setConfirmReset(false);
     setNotice("Settings saved.");
     refresh();
@@ -1243,12 +1341,32 @@ function Settings({ family, state, repo, refresh }: any) {
           value={timeZone}
           onChange={(event) => setTimeZone(event.target.value)}
         />
-        <label className="mt-4 block text-sm font-semibold">Kid Mode PIN</label>
+        <label className="mt-4 block text-sm font-semibold">Current Kid Mode PIN</label>
         <input
           className="mt-1 min-h-11 w-full rounded-md border border-slate-300 px-3"
-          value={pin}
-          onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 4))}
           inputMode="numeric"
+          maxLength={4}
+          type="password"
+          value={currentPin}
+          onChange={(event) => setCurrentPin(event.target.value.replace(/\D/g, "").slice(0, 4))}
+        />
+        <label className="mt-4 block text-sm font-semibold">New Kid Mode PIN</label>
+        <input
+          className="mt-1 min-h-11 w-full rounded-md border border-slate-300 px-3"
+          inputMode="numeric"
+          maxLength={4}
+          type="password"
+          value={newPin}
+          onChange={(event) => setNewPin(event.target.value.replace(/\D/g, "").slice(0, 4))}
+        />
+        <label className="mt-4 block text-sm font-semibold">Confirm New PIN</label>
+        <input
+          className="mt-1 min-h-11 w-full rounded-md border border-slate-300 px-3"
+          inputMode="numeric"
+          maxLength={4}
+          type="password"
+          value={confirmNewPin}
+          onChange={(event) => setConfirmNewPin(event.target.value.replace(/\D/g, "").slice(0, 4))}
         />
         <button
           className="mt-4 inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-slate-950 px-4 font-semibold text-white"
@@ -1318,7 +1436,7 @@ function Settings({ family, state, repo, refresh }: any) {
   );
 }
 
-function useWeeklyBalance(state: SummerQuestState) {
+function useWeeklyBalance(state: SummerQuestState, todayKey: string) {
   return useMemo(() => {
     const weekStart = getWeekStartMonday(todayKey);
     return calculateWeeklyBalance({
@@ -1328,7 +1446,7 @@ function useWeeklyBalance(state: SummerQuestState) {
       excusedDateKeys: [],
       weekStartDate: weekStart,
     });
-  }, [state]);
+  }, [state, todayKey]);
 }
 
 function Panel({ children }: { children: React.ReactNode }) {

@@ -296,6 +296,20 @@ describe("demo repository", () => {
     expect(state.quest_instances.filter((instance) => instance.quest_date === MONDAY)).toHaveLength(4);
     expect(state.quest_instances.every((instance) => instance.status === "not_started")).toBe(true);
   });
+
+  it("verifies the current PIN before a repository-level PIN reset", () => {
+    const repo = createStartedRepo();
+    const originalHash = repo.getState().users[0].kid_mode_pin_hash;
+
+    expect(repo.verifyKidModePin("0000")).toBe(false);
+    expect(repo.getState().users[0].kid_mode_pin_hash).toBe(originalHash);
+
+    expect(repo.verifyKidModePin("1234")).toBe(true);
+    repo.resetKidModePin("9876", "2026-06-29T12:00:00.000Z");
+
+    expect(repo.verifyKidModePin("1234")).toBe(false);
+    expect(repo.verifyKidModePin("9876")).toBe(true);
+  });
 });
 
 function createStartedRepo() {
