@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarDays,
@@ -41,7 +42,6 @@ type View = "dashboard" | "quests" | "rewards" | "approvals" | "planner" | "sett
 export function SummerQuestApp() {
   const repoRef = useRef(createDemoRepository(createInitialState()));
   const [state, setState] = useState<SummerQuestState>(() => repoRef.current.getState());
-  const [ready, setReady] = useState(false);
   const [view, setView] = useState<View>("dashboard");
   const [kidMode, setKidMode] = useState(false);
   const [pinAttempt, setPinAttempt] = useState("");
@@ -49,7 +49,6 @@ export function SummerQuestApp() {
 
   useEffect(() => {
     setState(repoRef.current.load());
-    setReady(true);
   }, []);
 
   useEffect(() => {
@@ -96,16 +95,6 @@ export function SummerQuestApp() {
   const progress = child ? getLevelProgress(child.total_xp) : null;
   const fallbackTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const todayKey = getTodayInTimeZone(family?.time_zone ?? fallbackTimeZone);
-
-  if (!ready) {
-    return (
-      <main className="min-h-screen bg-[#e5f3f0] px-4 py-6 text-slate-950">
-        <section className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-xl items-center justify-center rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-sm font-semibold text-emerald-800">Loading Summer Quest...</p>
-        </section>
-      </main>
-    );
-  }
 
   if (!child || !family) {
     return <Onboarding onStart={createDemo} />;
