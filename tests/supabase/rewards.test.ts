@@ -15,9 +15,9 @@ describe("Supabase reward approvals", () => {
 
     await expect(approveRewardRedemption(client as any, "redemption-1", "approved", false)).resolves.toEqual(row);
     expect(client.rpc).toHaveBeenCalledWith("approve_reward_redemption", {
-      p_reward_redemption_id: "redemption-1",
-      p_target_status: "approved",
-      p_allow_overdraw: false,
+      redemption_id: "redemption-1",
+      target_status: "approved",
+      allow_overdraw: false,
     });
   });
 

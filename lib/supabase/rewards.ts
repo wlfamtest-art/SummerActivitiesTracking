@@ -12,9 +12,9 @@ export async function approveRewardRedemption(
   allowOverdraw = false,
 ): Promise<SupabaseRewardRedemptionRow> {
   const { data, error } = await client.rpc("approve_reward_redemption", {
-    p_reward_redemption_id: rewardRedemptionId,
-    p_target_status: targetStatus,
-    p_allow_overdraw: allowOverdraw,
+    redemption_id: rewardRedemptionId,
+    target_status: targetStatus,
+    allow_overdraw: allowOverdraw,
   });
 
   if (error) {
